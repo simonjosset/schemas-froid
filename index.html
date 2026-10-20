@@ -116,6 +116,8 @@ button,input,textarea,select{font:inherit;color:inherit}
 .row{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
 .sec input[type=text],.sec textarea{width:100%;padding:7px 9px;border:1px solid var(--rule);border-radius:6px;background:var(--panel-2)}
 .sec textarea{resize:vertical;min-height:64px}
+.sec input[type=number]{width:84px;padding:6px 8px;border:1px solid var(--rule);border-radius:6px;background:var(--panel-2);font-variant-numeric:tabular-nums}
+.unit{color:var(--muted);font-size:13px}
 .sec input:focus,.sec textarea:focus{outline:2px solid var(--accent);outline-offset:-1px}
 input[type=color]{width:38px;height:32px;padding:2px;border:1px solid var(--rule);border-radius:6px;background:var(--panel-2);cursor:pointer}
 .hex{width:96px!important;font-family:var(--f-mono);font-size:12px}
@@ -353,7 +355,8 @@ const svg=$('#cv'), vp=$('#vp'), content=$('#content'), ui=$('#ui'), panel=$('#p
 const get=id=>id?(id[0]==='c'?doc.comps:id[0]==='l'?doc.lines:id[0]==='s'?doc.shapes:doc.texts).find(o=>o.id===id):null;
 
 /* ---------- Géométrie ---------- */
-const SCALES=[0.5,0.75,1,1.5,2,3];
+const SCALES=[0.5,0.75,1,1.5,2,3], SCMIN=0.1, SCMAX=10;
+const r2=v=>Math.round(v*100)/100, clampSc=v=>Math.min(SCMAX,Math.max(SCMIN,v));
 function rotv(c,x,y){ const k=c.sc||1; x*=k; y*=k; if(c.flip)x=-x; for(let i=0;i<c.rot;i++){const t=x;x=-y;y=t} return [x+0,y+0] }
 function tp(c,x,y){ const [a,b]=rotv(c,x,y); return {x:c.x+a,y:c.y+b} }
 function ports(c){ return SYM[c.type].ports.map(([x,y])=>{const [a,b]=rotv(c,x,y); return {x:c.x+a,y:c.y+b,d:Math.abs(a)>=Math.abs(b)?'h':'v'}}) }
@@ -613,6 +616,20 @@ function nudge(dx,dy){ const cs=selOf('c'), ts=selOf('t'), ls=selOf('l'), ss=sel
   ls.forEach(l=>l.pts.forEach(p=>{p.x+=dx;p.y+=dy}));
   linesOf(ids).forEach(l=>{ if(sel.has(l.id)) return; const both=l.a&&ids.has(l.a.c)&&l.b&&ids.has(l.b.c); if(both) l.pts.forEach(p=>{p.x+=dx;p.y+=dy}); else syncEnds(l) });
   ls.forEach(fixAttach); commit(); renderAll() }
+function setCompScale(v){ const cs=selOf('c'); if(!cs.length||!(v>0)) return; v=r2(clampSc(v)); cs.forEach(c=>c.sc=v);
+  linesOf(new Set(cs.map(c=>c.id))).forEach(l=>{syncEnds(l);simplify(l)}); commit(); renderAll(); buildPanel() }
+// Agrandit ou réduit la sélection autour de son centre : positions, symboles, textes, formes et liaisons
+function scaleSel(f){ const cs=selOf('c'), ts=selOf('t'), ls=selOf('l'), ss=selOf('s'); if(!(f>0)||f===1) return;
+  const b=itemsBox({comps:cs,lines:ls,texts:ts,shapes:ss}); if(!b) return;
+  if(cs.length){ const lo=Math.min(...cs.map(c=>c.sc||1)), hi=Math.max(...cs.map(c=>c.sc||1)); f=Math.min(f,SCMAX/hi); f=Math.max(f,SCMIN/lo) }
+  const cx=Math.round((b.x1+b.x2)/2/G)*G, cy=Math.round((b.y1+b.y2)/2/G)*G, X=x=>r2(cx+f*(x-cx)), Y=y=>r2(cy+f*(y-cy));
+  for(const c of cs){ c.x=X(c.x); c.y=Y(c.y); c.sc=r2(clampSc((c.sc||1)*f)); if(c.lx!=null){ c.lx=Math.round(c.lx*f); c.ly=Math.round(c.ly*f) } }
+  for(const t of ts){ t.x=X(t.x); t.y=Y(t.y); t.size=Math.max(4,r2(t.size*f)) }
+  for(const s of ss){ s.x=X(s.x); s.y=Y(s.y); s.w=Math.max(2,r2(s.w*f)); s.h=Math.max(2,r2(s.h*f)) }
+  for(const l of ls) l.pts=l.pts.map(p=>({x:X(p.x),y:Y(p.y)}));
+  // les liaisons raccordées suivent leurs ports (y compris celles qui sortent de la sélection)
+  const aff=new Set([...ls,...linesOf(new Set(cs.map(c=>c.id)))]); aff.forEach(l=>{syncEnds(l);simplify(l)});
+  commit(); renderAll(); buildPanel() }
 function copySel(){ if(!sel.size) return null; return {comps:clone(selOf('c')),lines:clone(selOf('l')),texts:clone(selOf('t')),shapes:clone(selOf('s'))} }
 // Insère un groupe d'éléments décalé de (dx,dy), avec de nouveaux identifiants et des repères renumérotés
 function insertItems(items,dx,dy){ const map={}, ids=[];
@@ -725,7 +742,7 @@ function styleControls(s){
   <div class="sec"><div class="lab">Flèches</div><div class="seg">${ARROWS.map(([k,n])=>`<button data-ar="${k}" class="${s.arrow===k?'on':''}">${n}</button>`).join('')}</div></div>` }
 function keys(){ return `<div class="sec"><div class="lab">Raccourcis</div><dl class="keys">
   <dt>V · L · T</dt><dd>Sélection, liaison, texte</dd><dt>X</dt><dd>Couper ce qui dépasse d'un croisement (liaisons et formes)</dd><dt>B · E</dt><dd>Rectangle, ellipse</dd><dt>O ou F8</dt><dd>Mode ortho</dd><dt>Maj</dt><dd>Inverse l'ortho pendant le tracé</dd>
-  <dt>G</dt><dd>Grille magnétique</dd><dt>R · Maj+R</dt><dd>Tourner de 90°</dd><dt>M</dt><dd>Miroir</dd><dt>Suppr</dt><dd>Effacer</dd>
+  <dt>Ctrl+clic</dt><dd>Ajouter ou retirer de la sélection (Maj+clic aussi)</dd><dt>G</dt><dd>Grille magnétique</dd><dt>R · Maj+R</dt><dd>Tourner de 90°</dd><dt>M</dt><dd>Miroir</dd><dt>Suppr</dt><dd>Effacer</dd>
   <dt>Ctrl+D</dt><dd>Dupliquer</dd><dt>Ctrl+C · V</dt><dd>Copier, coller</dd><dt>Ctrl+Z</dt><dd>Annuler</dd>
   <dt>Clic molette</dt><dd>Maintenir et glisser pour déplacer la vue</dd><dt>Clic droit</dt><dd>Maintenir et glisser, idem</dd><dt>H · Espace</dt><dd>Outil Main, ou Espace maintenu</dd>
   <dt>Molette</dt><dd>Zoom</dd><dt>F</dt><dd>Tout afficher</dd></dl></div>` }
@@ -743,6 +760,12 @@ function shapeSec(s){ const da=s.dash;
   <div class="sec"><div class="lab">Trait</div><div class="seg">${DASHES.map(([k,n])=>`<button data-sdash="${k}" class="${da===k?'on':''}">${n}</button>`).join('')}</div></div>
   <div class="sec"><div class="lab">Remplissage</div><div class="seg"><button data-sfill="0" class="${s.tint?'':'on'}">Aucun</button><button data-sfill="1" class="${s.tint?'on':''}">Teinté</button></div></div>
   ${s.k==='rect'?`<div class="sec"><div class="lab">Coins</div><div class="seg"><button data-sr="0" class="${s.r?'':'on'}">Droits</button><button data-sr="1" class="${s.r?'on':''}">Arrondis</button></div></div>`:''}` }
+function sizeSec(cs){ const v=cs[0].sc||1, one=cs.every(c=>(c.sc||1)===v);
+  return `<div class="sec"><div class="lab">${cs.length>1?'Taille des symboles':'Taille'}</div><div class="seg">${SCALES.map(k=>`<button data-sc="${k}" class="${one&&v===k?'on':''}">${k*100} %</button>`).join('')}</div>
+    <div class="row"><input type="number" id="p-sc" min="${SCMIN*100}" max="${SCMAX*100}" step="5" value="${one?Math.round(v*100):''}" placeholder="mixte" aria-label="Taille en pourcentage"><span class="unit">%, saisie libre${cs.length>1?', chaque symbole sur place':''}</span></div></div>` }
+function scaleSec(){ return `<div class="sec"><div class="lab">Échelle de la sélection</div><div class="seg">${[50,75,90,110,125,150,200].map(v=>`<button data-gs="${v}">${v} %</button>`).join('')}</div>
+    <div class="row"><input type="number" id="p-gs" min="10" max="1000" step="5" value="100" aria-label="Échelle en pourcentage"><span class="unit">%</span><button class="pbtn" data-act="gscale">Appliquer</button></div>
+    <p class="note">Agrandit ou réduit l'ensemble autour de son centre : écarts, symboles, textes, formes et liaisons. Ctrl+A puis échelle pour tout le schéma.</p></div>` }
 function buildPanel(){
   const items=[...sel].map(get).filter(Boolean), cs=items.filter(o=>o.id[0]==='c'), ls=items.filter(o=>o.id[0]==='l'), ts=items.filter(o=>o.id[0]==='t'), ss=items.filter(o=>o.id[0]==='s');
   if(stDraft&&stDraft!==selKey()) stDraft=null;
@@ -753,16 +776,18 @@ function buildPanel(){
     h=`<div class="ph"><div class="kind">Composant</div><h2>${esc(s.name)}</h2><p class="note">${s.ports.length?s.ports.length+' port'+(s.ports.length>1?'s':'')+' de raccordement':'Sans port de raccordement'}${s.src?`<br>Bloc DWG : ${esc(s.src)}`:''}</p></div>
     <div class="sec"><label class="lab" for="p-label">Repère</label><input type="text" id="p-label" value="${esc(c.label)}" spellcheck="false" placeholder="Sans repère"></div>
     <div class="sec"><div class="lab">Orientation</div><div class="row"><button class="pbtn" data-act="rotl">↺ 90°</button><button class="pbtn" data-act="rotr">↻ 90°</button><button class="pbtn${c.flip?' on':''}" data-act="flip">Miroir</button></div></div>
-    <div class="sec"><div class="lab">Taille</div><div class="seg">${SCALES.map(v=>`<button data-sc="${v}" class="${(c.sc||1)===v?'on':''}">${v*100} %</button>`).join('')}</div></div>
+    ${sizeSec(cs)}
     <div class="sec"><div class="row"><button class="pbtn" data-act="lblreset"${c.lx==null?' disabled':''}>Replacer le repère</button><button class="pbtn" data-act="dup">Dupliquer</button><button class="pbtn danger" data-act="del">Supprimer</button></div></div>`;
   } else if(items.length===1&&ts.length){ const t=ts[0];
     h=`<div class="ph"><div class="kind">Texte</div><h2>Texte libre</h2></div>
     <div class="sec"><label class="lab" for="p-text">Contenu</label><textarea id="p-text" rows="3">${esc(t.text)}</textarea></div>
-    <div class="sec"><div class="lab">Taille</div><div class="seg">${[10,12,14,18,24].map(s=>`<button data-ts="${s}" class="${t.size===s?'on':''}">${s}</button>`).join('')}</div></div>
+    <div class="sec"><div class="lab">Taille</div><div class="seg">${[10,12,14,18,24].map(s=>`<button data-ts="${s}" class="${t.size===s?'on':''}">${s}</button>`).join('')}</div>
+      <div class="row"><input type="number" id="p-tsize" min="4" max="400" step="1" value="${t.size}" aria-label="Taille du texte"><span class="unit">px, saisie libre</span></div></div>
     <div class="sec"><div class="lab">Mise en forme</div><div class="row"><button class="pbtn${t.bold?' on':''}" data-act="bold">Gras</button><input type="color" id="p-tcolor" value="${t.color}" aria-label="Couleur du texte"></div></div>
     <div class="sec"><div class="row"><button class="pbtn" data-act="dup">Dupliquer</button><button class="pbtn danger" data-act="del">Supprimer</button></div></div>`;
   } else if(items.length===1&&ss.length){ const s=ss[0];
-    h=`<div class="ph"><div class="kind">Forme</div><h2>${SHAPE_NAMES[s.k]}</h2><p class="note">${s.w} × ${s.h}. Glissez une poignée d'angle pour redimensionner, Maj garde les proportions.</p></div>`+shapeSec(s)+
+    h=`<div class="ph"><div class="kind">Forme</div><h2>${SHAPE_NAMES[s.k]}</h2><p class="note">${s.w} × ${s.h}. Glissez une poignée d'angle pour redimensionner, Maj garde les proportions.</p></div>
+      <div class="sec"><div class="lab">Dimensions</div><div class="row"><input type="number" id="p-shw" min="2" step="10" value="${s.w}" aria-label="Largeur"><span class="unit">×</span><input type="number" id="p-shh" min="2" step="10" value="${s.h}" aria-label="Hauteur"><span class="unit">largeur × hauteur</span></div></div>`+shapeSec(s)+
       `<div class="sec"><div class="row"><button class="pbtn" data-act="back">Mettre en arrière-plan</button><button class="pbtn" data-act="dup">Dupliquer</button><button class="pbtn danger" data-act="del">Supprimer</button></div></div>`;
   } else if(items.length===1&&ls.length){ const l=ls[0];
     h=`<div class="ph"><div class="kind">${l.contour?'Forme':'Liaison'}</div><h2>${esc(l.contour==='trait'?'Trait':l.contour?'Contour de forme découpée':(presetName(l)||'Trait personnalisé'))}</h2><p class="note">${l.pts.length-1} tronçon${l.pts.length>2?'s':''}${l.a||l.b?' · raccordée à '+((l.a?1:0)+(l.b?1:0))+' port'+(l.a&&l.b?'s':''):''}. Glissez un tronçon pour le décaler.</p></div>`+styleControls(l)+
@@ -770,6 +795,7 @@ function buildPanel(){
   } else {
     const parts=[[cs,'composant'],[ls,'liaison'],[ts,'texte'],[ss,'forme']].filter(([a])=>a.length).map(([a,n])=>a.length+' '+n+(a.length>1?'s':''));
     h=`<div class="ph"><div class="kind">Sélection multiple</div><h2>${items.length} éléments</h2><p class="note">${parts.join(', ')}</p></div>`+
+      (cs.length?sizeSec(cs):'')+scaleSec()+
       (cs.length||ls.length?stationSec():'')+
       (ls.length?styleControls(ls[0]):'')+
       `<div class="sec"><div class="row">${cs.length?'<button class="pbtn" data-act="rotl">↺ 90°</button><button class="pbtn" data-act="rotr">↻ 90°</button>':''}<button class="pbtn" data-act="dup">Dupliquer</button><button class="pbtn danger" data-act="del">Supprimer</button></div></div>`;
@@ -792,7 +818,8 @@ panel.addEventListener('click',e=>{ const b=e.target.closest('button'); if(!b) r
   if(d.sfill) return shapePatch({tint:d.sfill==='1'});
   if(d.sr) return shapePatch({r:d.sr==='1'});
   if(d.ts){ const t=selOf('t')[0]; if(t){t.size=+d.ts; commit(); renderAll(); buildPanel()} return }
-  if(d.sc){ const cs=selOf('c'); cs.forEach(c=>c.sc=+d.sc); linesOf(new Set(cs.map(c=>c.id))).forEach(l=>{syncEnds(l);simplify(l)}); commit(); renderAll(); buildPanel(); return }
+  if(d.sc) return setCompScale(+d.sc);
+  if(d.gs) return scaleSel(+d.gs/100);
   const one=get([...sel][0]);
   switch(d.act){
     case 'rotl': rotateSel(true); break;
@@ -807,8 +834,10 @@ panel.addEventListener('click',e=>{ const b=e.target.closest('button'); if(!b) r
     case 'stnew': stDraft=selKey(); buildPanel(); break;
     case 'stcancel': stDraft=null; buildPanel(); break;
     case 'stsave': doSaveStation(); break;
+    case 'gscale': { const f=$('#p-gs'); scaleSel((+(f&&f.value)||100)/100) } break;
   } });
-panel.addEventListener('keydown',e=>{ if(e.target.id==='p-stname'&&e.key==='Enter'){ e.preventDefault(); doSaveStation() } });
+panel.addEventListener('keydown',e=>{ if(e.target.id==='p-stname'&&e.key==='Enter'){ e.preventDefault(); doSaveStation() }
+  if(e.target.id==='p-gs'&&e.key==='Enter'){ e.preventDefault(); scaleSel((+e.target.value||100)/100); const f=$('#p-gs'); if(f) f.focus() } });
 panel.addEventListener('input',e=>{ const id=e.target.id, v=e.target.value, one=get([...sel][0]);
   if(id==='p-label'&&one){ one.label=v; renderContent(); renderUI() }
   else if(id==='p-text'&&one){ one.text=v; renderContent(); renderUI() }
@@ -817,7 +846,11 @@ panel.addEventListener('input',e=>{ const id=e.target.id, v=e.target.value, one=
   else if(id==='p-scolor'){ selOf('s').forEach(s=>s.color=v); shapeStyle.color=v; renderContent() }
   else if(id==='p-color'){ setStyleLive({color:v}); $('#p-hex').value=v }
   else if(id==='p-hex'){ const c=v.trim(); if(/^#[0-9a-f]{6}$/i.test(c)){ setStyleLive({color:c.toLowerCase()}); $('#p-color').value=c.toLowerCase() } } });
-panel.addEventListener('change',e=>{ const id=e.target.id;
+panel.addEventListener('change',e=>{ const id=e.target.id, n=parseFloat(e.target.value), one=get([...sel][0]);
+  const refocus=()=>{ const f=$('#'+id); if(f) f.focus() };
+  if(id==='p-sc'){ if(n>0){ setCompScale(n/100); refocus() } return }
+  if(id==='p-tsize'){ if(one&&n>0){ one.size=Math.min(400,Math.max(4,r2(n))); commit(); renderAll(); buildPanel(); refocus() } return }
+  if(id==='p-shw'||id==='p-shh'){ if(one&&n>0){ one[id==='p-shw'?'w':'h']=Math.max(2,r2(n)); commit(); renderAll(); buildPanel(); refocus() } return }
   if(id==='p-label'||id==='p-text'||id==='p-tcolor'||id==='p-stext') commit();
   if(id==='p-scolor'){ if(selOf('s').length) commit(); buildPanel() }
   if(id==='p-color'||id==='p-hex'){ if(selOf('l').length) commit(); buildPanel() } });
@@ -880,7 +913,7 @@ svg.addEventListener('auxclick',e=>{ if(e.button===1) e.preventDefault() });
 function rightClick(){ if(draft) finishDraft(); else if(placing){ placing=null; buildPalette(); svg.classList.remove('t-place'); renderUI(); status() } }
 svg.addEventListener('pointerdown',e=>{
   const ae=document.activeElement; if(ae&&/INPUT|TEXTAREA/.test(ae.tagName)) ae.blur();
-  const p=world(e); shiftDown=e.shiftKey;
+  const p=world(e); shiftDown=e.shiftKey; const add=e.shiftKey||e.ctrlKey||e.metaKey;
   if(e.button===1||(e.button===0&&(space||tool==='pan'))){ drag={mode:'pan',sx:e.clientX,sy:e.clientY,vx:view.x,vy:view.y,moved:true}; svg.classList.add('panning'); try{svg.setPointerCapture(e.pointerId)}catch(err){} return }
   if(e.button===2){ drag={mode:'pan',sx:e.clientX,sy:e.clientY,vx:view.x,vy:view.y,moved:false,right:true}; try{svg.setPointerCapture(e.pointerId)}catch(err){} return }
   if(e.button!==0) return;
@@ -900,16 +933,18 @@ svg.addEventListener('pointerdown',e=>{
   if(hd){ const [id,i]=hd.dataset.h.split(':'); const l=get(id), n=+i;
     drag={mode:'vertex',l,i:n,end:n===0||n===l.pts.length-1,orig:clone(l.pts),moved:false}; svg.setPointerCapture(e.pointerId); renderUI(); return }
   const lb=t.closest('[data-lbl]');
-  if(lb){ const c=get(lb.dataset.lbl); if(!sel.has(c.id)){ sel=new Set([c.id]); buildPanel() } const L=lblPos(c);
+  if(lb){ const c=get(lb.dataset.lbl);
+    if(add){ sel.has(c.id)?sel.delete(c.id):sel.add(c.id); buildPanel(); renderUI(); return }
+    if(!sel.has(c.id)){ sel=new Set([c.id]); buildPanel() } const L=lblPos(c);
     drag={mode:'label',c,p0:p,ox:L.x-c.x,oy:L.y-c.y,moved:false}; svg.setPointerCapture(e.pointerId); renderUI(); return }
   const it=t.closest('[data-id]');
   if(it){ const id=it.dataset.id;
-    if(e.shiftKey){ sel.has(id)?sel.delete(id):sel.add(id); buildPanel(); renderUI(); if(!sel.has(id)) return }
+    if(add){ sel.has(id)?sel.delete(id):sel.add(id); buildPanel(); renderUI(); if(!sel.has(id)) return }
     else if(!sel.has(id)){ sel=new Set([id]); buildPanel() }
     if(id[0]==='l'&&sel.size===1) startSeg(get(id),p); else startMove(p);
     svg.setPointerCapture(e.pointerId); renderUI(); return }
-  if(!e.shiftKey&&sel.size){ sel=new Set(); buildPanel() }
-  drag={mode:'band',p0:p,p1:p,add:e.shiftKey}; svg.setPointerCapture(e.pointerId); renderUI();
+  if(!add&&sel.size){ sel=new Set(); buildPanel() }
+  drag={mode:'band',p0:p,p1:p,add}; svg.setPointerCapture(e.pointerId); renderUI();
 });
 function startMove(p0){ const cs=selOf('c'), ts=[...selOf('t'),...selOf('s')], ls=selOf('l'), ids=new Set(cs.map(c=>c.id));
   const aff=linesOf(ids).filter(l=>!sel.has(l.id));
@@ -1023,7 +1058,7 @@ function status(){
   else if(tool==='line') h=draft?`Cliquez pour ajouter un point. Un clic sur un port ou une liaison termine. Double-clic, Entrée ou clic droit pour finir. Retour arrière retire le dernier point.`
                                :`Cliquez sur un port (rond bleu) ou n'importe où pour commencer la liaison. ${ortho?'Ortho actif : tracés horizontaux et verticaux.':'Ortho coupé : tracé libre.'} Maj inverse l'ortho.`;
   else if(tool==='text') h='Cliquez sur la feuille pour placer un texte.';
-  else h='Glissez pour déplacer. Glissez un tronçon de liaison pour le décaler.'+PAN;
+  else h='Glissez pour déplacer. Ctrl+clic pour sélectionner plusieurs éléments. Glissez un tronçon de liaison pour le décaler.'+PAN;
   $('#st-hint').textContent=h }
 let tt; function toast(m){ const t=$('#toast'); t.textContent=m; t.classList.add('show'); clearTimeout(tt); tt=setTimeout(()=>t.classList.remove('show'),2400) }
 
@@ -1096,7 +1131,7 @@ function exportPNG(){ const r=buildSVG(); if(!r) return toast('La feuille est vi
 function normDoc(d){ if(!d||!Array.isArray(d.comps)||!Array.isArray(d.lines)) throw new Error('format');
   const hex=c=>/^#[0-9a-f]{6}$/i.test(c)?c:INK;
   return {
-    comps:d.comps.filter(c=>c&&typeof c.type==='string').map(c=>{ ensureType(c.type); return {id:String(c.id),type:c.type,x:+c.x||0,y:+c.y||0,rot:(((c.rot|0)%4)+4)%4,flip:!!c.flip,sc:SCALES.includes(+c.sc)?+c.sc:1,label:String(c.label??''),lx:c.lx==null?null:+c.lx,ly:c.ly==null?null:+c.ly} }),
+    comps:d.comps.filter(c=>c&&typeof c.type==='string').map(c=>{ ensureType(c.type); return {id:String(c.id),type:c.type,x:+c.x||0,y:+c.y||0,rot:(((c.rot|0)%4)+4)%4,flip:!!c.flip,sc:clampSc(+c.sc||1),label:String(c.label??''),lx:c.lx==null?null:+c.lx,ly:c.ly==null?null:+c.ly} }),
     lines:d.lines.filter(l=>l&&Array.isArray(l.pts)&&l.pts.length>=2).map(l=>({id:String(l.id),pts:l.pts.map(p=>({x:+p.x||0,y:+p.y||0})),
       a:l.a&&l.a.c!=null?{c:String(l.a.c),p:l.a.p|0}:null,b:l.b&&l.b.c!=null?{c:String(l.b.c),p:l.b.p|0}:null,
       color:hex(l.color),width:[1,2,3,4].includes(l.width)?l.width:2,dash:['solid','dash','dot'].includes(l.dash)?l.dash:'solid',arrow:ARROWS.some(a=>a[0]===l.arrow)?l.arrow:'none',...(l.contour?{contour:l.contour==='trait'?'trait':true}:{})})),
