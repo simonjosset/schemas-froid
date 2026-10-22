@@ -511,6 +511,17 @@ function snap(p,opt={}){ const z=view.z; let best=null, bd=12/z;
   if(best) return best;
   return snapG(p) }
 function isOrtho(){ return ortho!==shiftDown }
+// Ortho : déplace le point i d'une liaison sans jamais laisser de tronçon en biais
+function orthoVertex(l,O,i,s){ const P=clone(O), last=P.length-1, q={x:s.x,y:s.y}, dom=o=>Math.abs(q.x-o.x)>=Math.abs(q.y-o.y);
+  if(last===1){ const o=P[1-i]; if(q.x!==o.x&&q.y!==o.y){
+      if(s.port||s.kind==='pt'){ const c=(s.d?s.d==='v':dom(o))?{x:q.x,y:o.y}:{x:o.x,y:q.y}; return i===0?[q,c,o]:[o,c,q] } // coude pour finir pile sur le point visé
+      if(dom(o)) q.y=o.y; else q.x=o.x }
+    P[i]=q; return P }
+  const nb=[i-1,i+1].filter(j=>j>=0&&j<=last), fixed=j=>(j===0&&l.a)||(j===last&&l.b);
+  for(const j of nb) if(fixed(j)){ const v=O[i], o=O[j]; if(o.y===v.y) q.y=o.y; else if(o.x===v.x) q.x=o.x; else if(dom(o)) q.y=o.y; else q.x=o.x }
+  P[i]=q;
+  for(const j of nb) if(!fixed(j)){ const v=O[i], o=O[j]; if(o.y===v.y) P[j].y=q.y; else if(o.x===v.x) P[j].x=q.x; else if(dom(o)) P[j].y=q.y; else P[j].x=q.x }
+  return P }
 function preview(s){ const last=draft.pts.at(-1), q={x:s.x,y:s.y};
   if(!isOrtho()||q.x===last.x||q.y===last.y) return [q];
   if(s.port||s.kind==='pt'){ const hFirst=s.d?s.d==='v':Math.abs(q.x-last.x)>=Math.abs(q.y-last.y);
@@ -609,8 +620,21 @@ function delSel(){ if(!sel.size) return; const ids=sel;
   sel=new Set(); commit(); renderAll(); buildPanel() }
 function rotateSel(ccw){ const cs=selOf('c'); if(!cs.length) return; cs.forEach(c=>c.rot=(c.rot+(ccw?3:1))%4);
   linesOf(new Set(cs.map(c=>c.id))).forEach(l=>{syncEnds(l);simplify(l)}); commit(); renderAll() }
-function flipSel(){ const cs=selOf('c'); if(!cs.length) return; cs.forEach(c=>c.flip=!c.flip);
-  linesOf(new Set(cs.map(c=>c.id))).forEach(l=>{syncEnds(l);simplify(l)}); commit(); renderAll() }
+// Miroir gauche-droite (ou haut-bas si vert) : un symbole seul sur place, sinon toute la sélection autour de son centre
+function mirrorSel(vert){ const cs=selOf('c'), ts=selOf('t'), ls=selOf('l'), ss=selOf('s'); if(!sel.size) return;
+  let cx,cy;
+  if(cs.length===1&&sel.size===1){ cx=cs[0].x; cy=cs[0].y }
+  else { const b=itemsBox({comps:cs,lines:ls,texts:ts,shapes:ss}); if(!b) return; const H=G/2; cx=Math.round((b.x1+b.x2)/2/H)*H; cy=Math.round((b.y1+b.y2)/2/H)*H }
+  const mp=q=>vert?{x:q.x,y:2*cy-q.y}:{x:2*cx-q.x,y:q.y};
+  for(const c of cs){ Object.assign(c,mp(c)); c.flip=!c.flip; c.rot=vert?(6-c.rot)%4:(4-c.rot)%4;
+    if(c.lx!=null){ if(vert) c.ly=-c.ly; else c.lx=-c.lx } }
+  for(const t of ts){ const el=content.querySelector(`[data-id="${t.id}"]`), b=el&&el.getBBox();
+    if(!b){ Object.assign(t,mp(t)); continue }
+    const r1=v=>Math.round(v*10)/10; if(vert) t.y=r1(t.y+2*cy-(b.y+b.height)-b.y); else t.x=r1(t.x+2*cx-(b.x+b.width)-b.x) }
+  for(const o of ss){ if(vert) o.y=2*cy-(o.y+o.h); else o.x=2*cx-(o.x+o.w) }
+  for(const l of ls) l.pts=l.pts.map(mp);
+  const aff=new Set([...ls,...linesOf(new Set(cs.map(c=>c.id)))]); aff.forEach(l=>{syncEnds(l);simplify(l)});
+  commit(); renderAll(); buildPanel() }
 function nudge(dx,dy){ const cs=selOf('c'), ts=selOf('t'), ls=selOf('l'), ss=selOf('s'); if(!cs.length&&!ts.length&&!ls.length&&!ss.length) return;
   const ids=new Set(cs.map(c=>c.id)); [...cs,...ts,...ss].forEach(o=>{o.x+=dx;o.y+=dy});
   ls.forEach(l=>l.pts.forEach(p=>{p.x+=dx;p.y+=dy}));
@@ -742,7 +766,7 @@ function styleControls(s){
   <div class="sec"><div class="lab">Flèches</div><div class="seg">${ARROWS.map(([k,n])=>`<button data-ar="${k}" class="${s.arrow===k?'on':''}">${n}</button>`).join('')}</div></div>` }
 function keys(){ return `<div class="sec"><div class="lab">Raccourcis</div><dl class="keys">
   <dt>V · L · T</dt><dd>Sélection, liaison, texte</dd><dt>X</dt><dd>Couper ce qui dépasse d'un croisement (liaisons et formes)</dd><dt>B · E</dt><dd>Rectangle, ellipse</dd><dt>O ou F8</dt><dd>Mode ortho</dd><dt>Maj</dt><dd>Inverse l'ortho pendant le tracé</dd>
-  <dt>Ctrl+clic</dt><dd>Ajouter ou retirer de la sélection (Maj+clic aussi)</dd><dt>G</dt><dd>Grille magnétique</dd><dt>R · Maj+R</dt><dd>Tourner de 90°</dd><dt>M</dt><dd>Miroir</dd><dt>Suppr</dt><dd>Effacer</dd>
+  <dt>Ctrl+clic</dt><dd>Ajouter ou retirer de la sélection (Maj+clic aussi)</dd><dt>G</dt><dd>Grille magnétique</dd><dt>R · Maj+R</dt><dd>Tourner de 90°</dd><dt>M · Maj+M</dt><dd>Miroir gauche-droite, haut-bas (un objet ou toute la sélection)</dd><dt>Suppr</dt><dd>Effacer</dd>
   <dt>Ctrl+D</dt><dd>Dupliquer</dd><dt>Ctrl+C · V</dt><dd>Copier, coller</dd><dt>Ctrl+Z</dt><dd>Annuler</dd>
   <dt>Clic molette</dt><dd>Maintenir et glisser pour déplacer la vue</dd><dt>Clic droit</dt><dd>Maintenir et glisser, idem</dd><dt>H · Espace</dt><dd>Outil Main, ou Espace maintenu</dd>
   <dt>Molette</dt><dd>Zoom</dd><dt>F</dt><dd>Tout afficher</dd></dl></div>` }
@@ -775,7 +799,7 @@ function buildPanel(){
   } else if(items.length===1&&cs.length){ const c=cs[0], s=SYM[c.type];
     h=`<div class="ph"><div class="kind">Composant</div><h2>${esc(s.name)}</h2><p class="note">${s.ports.length?s.ports.length+' port'+(s.ports.length>1?'s':'')+' de raccordement':'Sans port de raccordement'}${s.src?`<br>Bloc DWG : ${esc(s.src)}`:''}</p></div>
     <div class="sec"><label class="lab" for="p-label">Repère</label><input type="text" id="p-label" value="${esc(c.label)}" spellcheck="false" placeholder="Sans repère"></div>
-    <div class="sec"><div class="lab">Orientation</div><div class="row"><button class="pbtn" data-act="rotl">↺ 90°</button><button class="pbtn" data-act="rotr">↻ 90°</button><button class="pbtn${c.flip?' on':''}" data-act="flip">Miroir</button></div></div>
+    <div class="sec"><div class="lab">Orientation</div><div class="row"><button class="pbtn" data-act="rotl">↺ 90°</button><button class="pbtn" data-act="rotr">↻ 90°</button><button class="pbtn" data-act="mirh" title="Miroir gauche-droite (M)">Miroir ↔</button><button class="pbtn" data-act="mirv" title="Miroir haut-bas (Maj+M)">Miroir ↕</button></div></div>
     ${sizeSec(cs)}
     <div class="sec"><div class="row"><button class="pbtn" data-act="lblreset"${c.lx==null?' disabled':''}>Replacer le repère</button><button class="pbtn" data-act="dup">Dupliquer</button><button class="pbtn danger" data-act="del">Supprimer</button></div></div>`;
   } else if(items.length===1&&ts.length){ const t=ts[0];
@@ -798,7 +822,8 @@ function buildPanel(){
       (cs.length?sizeSec(cs):'')+scaleSec()+
       (cs.length||ls.length?stationSec():'')+
       (ls.length?styleControls(ls[0]):'')+
-      `<div class="sec"><div class="row">${cs.length?'<button class="pbtn" data-act="rotl">↺ 90°</button><button class="pbtn" data-act="rotr">↻ 90°</button>':''}<button class="pbtn" data-act="dup">Dupliquer</button><button class="pbtn danger" data-act="del">Supprimer</button></div></div>`;
+      `<div class="sec"><div class="lab">Toute la sélection</div><div class="row">${cs.length?'<button class="pbtn" data-act="rotl">↺ 90°</button><button class="pbtn" data-act="rotr">↻ 90°</button>':''}<button class="pbtn" data-act="mirh" title="Miroir gauche-droite (M)">Miroir ↔</button><button class="pbtn" data-act="mirv" title="Miroir haut-bas (Maj+M)">Miroir ↕</button></div>
+      <div class="row"><button class="pbtn" data-act="dup">Dupliquer</button><button class="pbtn danger" data-act="del">Supprimer</button></div></div>`;
   }
   panel.innerHTML=h;
   if(stDraft===selKey()){ const f=$('#p-stname'); if(f) f.focus() }
@@ -824,7 +849,8 @@ panel.addEventListener('click',e=>{ const b=e.target.closest('button'); if(!b) r
   switch(d.act){
     case 'rotl': rotateSel(true); break;
     case 'rotr': rotateSel(false); break;
-    case 'flip': flipSel(); buildPanel(); break;
+    case 'mirh': mirrorSel(false); break;
+    case 'mirv': mirrorSel(true); break;
     case 'del': delSel(); break;
     case 'dup': paste(copySel(),20,20); break;
     case 'lblreset': if(one){one.lx=one.ly=null; commit(); renderAll(); buildPanel()} break;
@@ -983,12 +1009,10 @@ svg.addEventListener('pointermove',e=>{
     if(d.ori==='h'){ P[i].y+=dy; P[i+1].y+=dy } else if(d.ori==='v'){ P[i].x+=dx; P[i+1].x+=dx } else { P[i].x+=dx;P[i].y+=dy;P[i+1].x+=dx;P[i+1].y+=dy }
     d.l.pts=P }
   else if(d.mode==='vertex'){ const l=d.l, i=d.i, s=snap(p,{ports:d.end,ex:l}); d.moved=true; hover={s};
-    const P=clone(d.orig), last=P.length-1; P[i]={x:s.x,y:s.y};
-    if(isOrtho()&&!d.end){ const v=d.orig[i];
-      if(!(i-1===0&&l.a)){ const pr=d.orig[i-1]; if(pr.y===v.y) P[i-1].y=s.y; else if(pr.x===v.x) P[i-1].x=s.x }
-      if(!(i+1===last&&l.b)){ const nx=d.orig[i+1]; if(nx.y===v.y) P[i+1].y=s.y; else if(nx.x===v.x) P[i+1].x=s.x } }
+    const last=d.orig.length-1; let P;
+    if(isOrtho()) P=orthoVertex(l,d.orig,i,s); else { P=clone(d.orig); P[i]={x:s.x,y:s.y} }
     l.pts=P;
-    if(i===0) l.a=s.port||null; if(i===last) l.b=s.port||null }
+    if(i===0) l.a=s.port&&same(P[0],s)?s.port:null; if(i===last) l.b=s.port&&same(P.at(-1),s)?s.port:null }
   else if(d.mode==='label'){ d.moved=true; d.c.lx=Math.round(d.ox+p.x-d.p0.x); d.c.ly=Math.round(d.oy+p.y-d.p0.y) }
   renderContent(); renderUI();
 });
@@ -1089,7 +1113,7 @@ window.addEventListener('keydown',e=>{
     case 'o': case 'O': case 'F8': e.preventDefault(); toggleOrtho(); break;
     case 'g': case 'G': toggleGrid(); break;
     case 'r': case 'R': if(placing){ if(placing.st){ rotItems(placing.items); if(e.shiftKey){ rotItems(placing.items); rotItems(placing.items) } } else placing.rot=(placing.rot+(e.shiftKey?3:1))%4; renderUI() } else rotateSel(e.shiftKey); break;
-    case 'm': case 'M': flipSel(); buildPanel(); break;
+    case 'm': case 'M': mirrorSel(e.shiftKey); break;
     case 'f': case 'F': fit(); break;
     case '+': case '=': zoomAt(svg.clientWidth/2,svg.clientHeight/2,1.25); break;
     case '-': case '_': zoomAt(svg.clientWidth/2,svg.clientHeight/2,0.8); break;
