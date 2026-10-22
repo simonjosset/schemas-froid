@@ -42,6 +42,7 @@ button,input,textarea,select{font:inherit;color:inherit}
 .top{grid-area:top;display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;padding:8px 16px;background:var(--panel);border-bottom:1px solid var(--rule)}
 .brand{display:flex;align-items:center;gap:8px;font:600 16px/1 var(--f-cond);letter-spacing:.01em;margin-right:4px;white-space:nowrap}
 .brand svg{width:24px;height:24px;color:var(--accent)}
+.brand .ver{font:500 11px/1 var(--f-mono);color:var(--muted)}
 .grp{display:flex;gap:2px;padding:2px;background:var(--panel-2);border:1px solid var(--rule);border-radius:7px}
 .btn{appearance:none;border:0;background:transparent;font:500 13px/1 var(--f-ui);padding:7px 10px;border-radius:5px;display:inline-flex;align-items:center;gap:6px;cursor:pointer;white-space:nowrap}
 .btn:hover{background:var(--hover)}
@@ -162,7 +163,7 @@ input[type=color]{width:38px;height:32px;padding:2px;border:1px solid var(--rule
   <header class="top">
     <div class="brand">
       <svg viewBox="-24 -24 48 48" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" aria-hidden="true"><circle r="20"/><path d="M-12,-16L19,-6M-12,16L19,6"/></svg>
-      <span>Schémas Froid &amp; CTA</span>
+      <span>Schémas Froid &amp; CTA</span><small class="ver" title="Version">v1.3</small>
     </div>
     <div class="grp" role="group" aria-label="Outils">
       <button class="btn" data-tool="select" aria-pressed="true" title="Sélection (V)"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M3 1.5l9.5 6.2-4.3.9 2.4 4.6-1.7.9-2.4-4.6L3 12.4z"/></svg>Sélection <kbd>V</kbd></button>
@@ -514,7 +515,7 @@ function isOrtho(){ return ortho!==shiftDown }
 // Ortho : déplace le point i d'une liaison sans jamais laisser de tronçon en biais
 function orthoVertex(l,O,i,s){ const P=clone(O), last=P.length-1, q={x:s.x,y:s.y}, dom=o=>Math.abs(q.x-o.x)>=Math.abs(q.y-o.y);
   if(last===1){ const o=P[1-i]; if(q.x!==o.x&&q.y!==o.y){
-      if(s.port||s.kind==='pt'){ const c=(s.d?s.d==='v':dom(o))?{x:q.x,y:o.y}:{x:o.x,y:q.y}; return i===0?[q,c,o]:[o,c,q] } // coude pour finir pile sur le point visé
+      if(s.port&&!l.contour){ const c=(s.d?s.d==='v':dom(o))?{x:q.x,y:o.y}:{x:o.x,y:q.y}; return i===0?[q,c,o]:[o,c,q] } // coude pour finir pile sur le port visé
       if(dom(o)) q.y=o.y; else q.x=o.x }
     P[i]=q; return P }
   const nb=[i-1,i+1].filter(j=>j>=0&&j<=last), fixed=j=>(j===0&&l.a)||(j===last&&l.b);
@@ -967,7 +968,8 @@ svg.addEventListener('pointerdown',e=>{
   if(it){ const id=it.dataset.id;
     if(add){ sel.has(id)?sel.delete(id):sel.add(id); buildPanel(); renderUI(); if(!sel.has(id)) return }
     else if(!sel.has(id)){ sel=new Set([id]); buildPanel() }
-    if(id[0]==='l'&&sel.size===1) startSeg(get(id),p); else startMove(p);
+    const l=id[0]==='l'&&get(id);
+    if(l&&sel.size===1&&!(l.pts.length===2&&!l.a&&!l.b)) startSeg(l,p); else startMove(p);
     svg.setPointerCapture(e.pointerId); renderUI(); return }
   if(!add&&sel.size){ sel=new Set(); buildPanel() }
   drag={mode:'band',p0:p,p1:p,add}; svg.setPointerCapture(e.pointerId); renderUI();
@@ -998,7 +1000,8 @@ svg.addEventListener('pointermove',e=>{
     if(e.shiftKey){ const m=Math.max(Math.abs(w),Math.abs(h)); w=(w<0?-1:1)*m; h=(h<0?-1:1)*m }
     s.x=Math.min(fx,fx+w); s.y=Math.min(fy,fy+h); s.w=Math.abs(w); s.h=Math.abs(h);
     renderContent(); renderUI(); return }
-  const dx=snapv(p.x-(d.p0?d.p0.x:0)), dy=snapv(p.y-(d.p0?d.p0.y:0));
+  let dx=snapv(p.x-(d.p0?d.p0.x:0)), dy=snapv(p.y-(d.p0?d.p0.y:0));
+  if(d.mode==='move'&&isOrtho()){ if(Math.abs(p.x-d.p0.x)>=Math.abs(p.y-d.p0.y)) dy=0; else dx=0 }
   if(d.mode==='move'){ if(dx||dy) d.moved=true;
     for(const o of [...d.cs,...d.ts]){ const q=d.o.get(o.id); o.x=q.x+dx; o.y=q.y+dy }
     for(const l of d.ls) l.pts=d.lo.get(l.id).map(q=>({x:q.x+dx,y:q.y+dy}));
@@ -1082,7 +1085,7 @@ function status(){
   else if(tool==='line') h=draft?`Cliquez pour ajouter un point. Un clic sur un port ou une liaison termine. Double-clic, Entrée ou clic droit pour finir. Retour arrière retire le dernier point.`
                                :`Cliquez sur un port (rond bleu) ou n'importe où pour commencer la liaison. ${ortho?'Ortho actif : tracés horizontaux et verticaux.':'Ortho coupé : tracé libre.'} Maj inverse l'ortho.`;
   else if(tool==='text') h='Cliquez sur la feuille pour placer un texte.';
-  else h='Glissez pour déplacer. Ctrl+clic pour sélectionner plusieurs éléments. Glissez un tronçon de liaison pour le décaler.'+PAN;
+  else h=(ortho?'Glissez pour déplacer (ortho : horizontal ou vertical, Maj pour libre). ':'Glissez pour déplacer. ')+'Ctrl+clic pour sélectionner plusieurs éléments. Glissez un tronçon de liaison pour le décaler.'+PAN;
   $('#st-hint').textContent=h }
 let tt; function toast(m){ const t=$('#toast'); t.textContent=m; t.classList.add('show'); clearTimeout(tt); tt=setTimeout(()=>t.classList.remove('show'),2400) }
 
